@@ -7,11 +7,19 @@
 		<script src="wasm_exec.js"></script>
 
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
         <script src="jquery-linedtextarea.js"></script>
         <script src="playground.js"></script>
+        <script src="sharing.js"></script>
 
 		<script>
             $(document).ready(function() {
+                initSharing({
+                    codeEl: '#code',
+                    shareEl: '#share',
+                    shareURLEl: '#shareURL',
+                });
+
                 $('#code').linedtextarea();
                 $('#code').attr('wrap', 'off');
 
@@ -150,6 +158,8 @@
 			<div id="controls">
 				<input type="button" value="Loading..." id="run" disabled />
                 <input type="button" value="Format" id="fmt" style="display:none;" disabled>
+				<input type="button" value="Share" id="share">
+				<input type="text" id="shareURL" style="display:none;">
 			</div>
             <a style="float:right;padding:15px;font-family:sans-serif;" href="https://github.com/ccbrown/wasm-go-playground" target="_blank">github.com/ccbrown/wasm-go-playground</a>
 		</div>
