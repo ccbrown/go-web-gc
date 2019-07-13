@@ -19,7 +19,6 @@ function initSharing(opts) {
         }
     };
 
-
     code[0].addEventListener('input', () => {
         window.location.hash = '';
         shareURL.hide();
