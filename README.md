@@ -15,6 +15,8 @@ One potential use-case for this is making compiler changes easily and freely ava
 
 If you're interested in trying out the `try` [proposal](https://github.com/golang/proposal/blob/master/design/32437-try-builtin.md), you can do so here: https://ccbrown.github.io/wasm-go-playground/experimental/try-builtin/
 
+If you're interested in trying out generics, you can do so here: https://ccbrown.github.io/wasm-go-playground/experimental/generics/
+
 ## Code
 
 * ./cmd – These are Go commands compiled for WASM. They were all produced by running commands such as `GOOS=js GOARCH=wasm go build .` from the Go source directories.

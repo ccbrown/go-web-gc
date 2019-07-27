@@ -1,0 +1,197 @@
+<html>
+	<head>
+		<meta charset="utf-8">
+        <title>The WebAssembly Go Playground</title>
+
+        <link rel="stylesheet" href="../../style.css">
+		<script src="wasm_exec.js"></script>
+
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
+        <script src="../../jquery-linedtextarea.js"></script>
+        <script src="../../playground.js"></script>
+        <script src="../../sharing.js"></script>
+
+		<script>
+            $(document).ready(function() {
+                initSharing({
+                    codeEl: '#code',
+                    shareEl: '#share',
+                    shareURLEl: '#shareURL',
+                });
+
+                $('#code').linedtextarea();
+                $('#code').attr('wrap', 'off');
+
+                if (!WebAssembly || !WebAssembly.instantiate) {
+                    $('#run').val('Unsupported Browser');
+                    $('#controls input').attr('disabled', true);
+                    return;
+                }
+
+                let cmds = {};
+
+                const exec = (wasm, args) => new Promise((resolve, reject) => {
+                    const go = new Go();
+                    go.exit = resolve;
+                    go.argv = go.argv.concat(args || []);
+                    WebAssembly.instantiate(wasm, go.importObject).then((result) => go.run(result.instance)).catch(reject);
+                });
+
+                Promise.all(
+                    [
+                        'prebuilt/runtime.a',
+                        'prebuilt/internal/bytealg.a',
+                        'prebuilt/internal/cpu.a',
+                        'prebuilt/runtime/internal/atomic.a',
+                        'prebuilt/runtime/internal/math.a',
+                        'prebuilt/runtime/internal/sys.a',
+                    ].map((path) => fetch(path)
+                        .then((response) => response.arrayBuffer())
+                        .then((buf) => writeToGoFilesystem(path, new Uint8Array(buf)))
+                    ).concat(
+                        ['compile', 'link', 'preprocess']
+                            .map((cmd) => fetch('cmd/' + cmd + '.wasm')
+                                .then((response) => response.arrayBuffer())
+                                .then((buf) => {
+                                    cmds[cmd] = new Uint8Array(buf);
+                                })
+                            )
+                    )
+                ).then(() => {
+                    const decoder = new TextDecoder('utf-8');
+                    const encoder = new TextEncoder('utf-8');
+
+                    writeToGoFilesystem('/importcfg', encoder.encode(
+                        "packagefile runtime=prebuilt/runtime.a"
+                    ));
+
+                    writeToGoFilesystem('/importcfg.link', encoder.encode(
+                        "packagefile command-line-arguments=main.a\n" +
+                        "packagefile runtime=prebuilt/runtime.a\n" +
+                        "packagefile internal/bytealg=prebuilt/internal/bytealg.a\n" +
+                        "packagefile internal/cpu=prebuilt/internal/cpu.a\n" +
+                        "packagefile runtime/internal/atomic=prebuilt/runtime/internal/atomic.a\n" +
+                        "packagefile runtime/internal/math=prebuilt/runtime/internal/math.a\n" +
+                        "packagefile runtime/internal/sys=prebuilt/runtime/internal/sys.a"
+                    ));
+
+                    playground({
+                        codeEl: '#code',
+                        outputEl: '#output',
+                        runEl: '#run',
+                        enableHistory: false,
+                        enableShortcuts: true,
+                        transport: {
+                            Run: (body, output) => {
+                                $('#controls input').attr('disabled', true);
+
+                                writeToGoFilesystem('/main-raw.go', body);
+                                output({
+                                    Kind: 'start',
+                                });
+                                goStderr = (buf) => {
+                                    output({
+                                        Kind: 'stderr',
+                                        Body: decoder.decode(buf),
+                                    });
+                                };
+                                goStdout = (buf) => {
+                                    output({
+                                        Kind: 'stdout',
+                                        Body: decoder.decode(buf),
+                                    });
+                                };
+
+                                
+                                exec(cmds['preprocess'], ['main-raw.go', 'main.go'])
+                                    .then((code) => code || exec(cmds['compile'], ['-p', 'main', '-complete', '-dwarf=false', '-pack', '-importcfg', 'importcfg', 'main.go']))
+                                    .then((code) => code || exec(cmds['link'], ['-importcfg', 'importcfg.link', '-buildmode=exe', 'main.a']))
+                                    .then((code) => code || exec(readFromGoFilesystem('a.out')))
+                                    .then((code) => {
+                                        output({
+                                            Kind: 'end',
+                                            Body: code ? 'status ' + code + '.' : undefined,
+                                        });
+                                    })
+                                    .catch((err) => {
+                                        output({
+                                            Kind: 'end',
+                                            Body: 'wasm error: ' + (err.message || 'unknown'),
+                                        });
+                                    })
+                                    .finally(() => $('#controls input').attr('disabled', false))
+                                ;
+
+                                return {
+                                    Kill: () => {},
+                                };
+                            },
+                        },
+                    });
+
+                    $('#run').val('Run');
+
+                    $('#controls input').attr('disabled', false);
+                });
+            });
+		</script>
+	</head>
+	<body itemscope itemtype="http://schema.org/CreativeWork">
+		<div id="banner">
+			<div id="head" itemprop="name">The WebAssembly Go Playground</div>
+			<div id="controls">
+				<input type="button" value="Loading..." id="run" disabled />
+				<input type="button" value="Share" id="share">
+				<input type="text" id="shareURL" style="display:none;">
+			</div>
+            <a style="float:right;padding:15px;font-family:sans-serif;" href="https://github.com/ccbrown/wasm-go-playground" target="_blank">github.com/ccbrown/wasm-go-playground</a>
+		</div>
+		<div id="wrap">
+			<textarea itemprop="description" id="code" name="code" autocorrect="off" autocomplete="off" autocapitalize="off" spellcheck="false">package main
+
+// XXX: This is highly experimental. Don't expect correctness or stability.
+
+// Takes a slice of any type and reverses it.
+func Reverse (type T) (list []T) {
+	i := 0
+	j := len(list) - 1
+	for i < j {
+		list[i], list[j] = list[j], list[i]
+		i++
+		j--
+	}
+}
+
+// Requires T to be a string or byte slice.
+//
+// Note that at the moment, contracts are not actually type-checked.
+contract Sequence(T) {
+	T string, []byte
+}
+
+// Defines a tree where each node can hold a value that satisfies Sequence.
+type Tree (type T Sequence) struct {
+	Left *Tree
+	Right *Tree
+	Value T
+}
+
+func main() {
+	s := []string{"a", "b", "c"}
+	Reverse(s)
+	println(s[0], s[1], s[2])
+	
+	tree := Tree(string){
+		Value: "foo",
+		Left: &Tree(string){
+			Value: "bar",
+		},
+	}
+	println(tree.Left.Value)
+}
+</textarea>
+		</div>
+		<div id="output"></div>
+	</body>
+</html>
