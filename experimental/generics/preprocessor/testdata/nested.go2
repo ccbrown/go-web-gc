@@ -1,0 +1,15 @@
+package pkg
+
+func Foo (type T) (x T) int {
+    return 1
+}
+
+func Bar (type U) (x U) int {
+    return Foo(U)(x)
+}
+
+func Baz (type V) (x V) int {
+    return Bar(V)(x)
+}
+
+var _ = Baz(1)

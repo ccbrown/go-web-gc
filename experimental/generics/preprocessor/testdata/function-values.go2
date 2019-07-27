@@ -1,0 +1,7 @@
+package pkg
+
+func Nop (type T) (x T) T {
+	return x
+}
+
+var _ = Nop(int)

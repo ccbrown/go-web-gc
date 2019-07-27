@@ -89,56 +89,20 @@ func isParameterized(obj types.Object) bool {
 	return ok && p.IsParameterized()
 }
 
-func preprocess(node ast.Node, info *types.Info) (ast.Node, []ast.Decl) {
-	// Remove contracts. This has to be done first, otherwise astutil will choke.
-	node = astutil.Apply(node, func(c *astutil.Cursor) bool {
-		switch node := c.Node().(type) {
-		case *ast.TypeSpec:
-			if _, ok := node.Type.(*ast.ContractType); ok {
-				c.Delete()
-				return false
-			}
-		}
-		return true
-	}, nil)
+var generatedDecls = map[string]ast.Decl{}
+var functionTemplates = map[string]*ast.FuncDecl{}
+var typeTemplates = map[string]*ast.TypeSpec{}
 
-	functionTemplates := map[string]*ast.FuncDecl{}
-	typeTemplates := map[string]*ast.TypeSpec{}
-
-	// Remove template definitions
-	node = astutil.Apply(node, func(c *astutil.Cursor) bool {
-		switch node := c.Node().(type) {
-		case *ast.FuncDecl:
-			if node.TParams != nil {
-				functionTemplates[node.Name.Name] = node
-				c.Delete()
-				return false
-			}
-		case *ast.GenDecl:
-			var newSpecs []ast.Spec
-			for _, spec := range node.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.TParams != nil {
-					typeTemplates[typeSpec.Name.Name] = typeSpec
-				} else {
-					newSpecs = append(newSpecs, spec)
-				}
-			}
-			node.Specs = newSpecs
-			if len(newSpecs) == 0 {
-				c.Delete()
-				return false
-			}
-		}
-		return true
-	}, nil)
-
+func preprocess(node ast.Node, info *types.Info, parentTypeParams map[string]types.Type) ast.Node {
 	// Remove type arguments from call sites
 	node = astutil.Apply(node, func(c *astutil.Cursor) bool {
 		switch node := c.Node().(type) {
 		case *ast.CallExpr:
-			if len(node.Args) > 0 && info.Types[node.Args[0]].IsType() {
-				if ident, ok := node.Fun.(*ast.Ident); ok && isParameterized(info.Uses[ident]) {
-					c.Replace(node.Fun)
+			if len(node.Args) > 0 {
+				if t := info.Types[node.Args[0]]; t.IsType() || (t == types.TypeAndValue{}) {
+					if ident, ok := node.Fun.(*ast.Ident); ok && isParameterized(info.Uses[ident]) {
+						c.Replace(node.Fun)
+					}
 				}
 			}
 		}
@@ -178,9 +142,16 @@ func preprocess(node ast.Node, info *types.Info) (ast.Node, []ast.Decl) {
 			if isParameterized(info.Uses[node]) {
 				if targs := info.TypeArguments[node]; targs != nil {
 					name := generatedName(node.Name, targs)
-					instantiatedTypes[name] = instantiation{
-						name:  node.Name,
-						targs: targs,
+					if info.Types[node].IsValue() {
+						instantiatedFunctions[name] = instantiation{
+							name:  node.Name,
+							targs: targs,
+						}
+					} else {
+						instantiatedTypes[name] = instantiation{
+							name:  node.Name,
+							targs: targs,
+						}
 					}
 					c.Replace(ast.NewIdent(name))
 				}
@@ -189,10 +160,18 @@ func preprocess(node ast.Node, info *types.Info) (ast.Node, []ast.Decl) {
 		return true
 	}, nil)
 
-	var decls []ast.Decl
-
 	// Generate functions
 	for name, f := range instantiatedFunctions {
+		if _, ok := generatedDecls[name]; ok {
+			continue
+		}
+
+		for i, targ := range f.targs {
+			if param, ok := targ.(*types.TypeParam); ok {
+				f.targs[i] = parentTypeParams[param.String()]
+			}
+		}
+
 		template := astcopy.FuncDecl(functionTemplates[f.name])
 		template.Name = ast.NewIdent(name)
 		decl := astutil.Apply(template, func(c *astutil.Cursor) bool {
@@ -214,20 +193,24 @@ func preprocess(node ast.Node, info *types.Info) (ast.Node, []ast.Decl) {
 			}
 			return true
 		}, nil).(*ast.FuncDecl)
-		decls = append(decls, decl)
+		parentTypeParams := map[string]types.Type{}
+		for i, tparam := range template.TParams.List {
+			for j, tpident := range tparam.Names {
+				parentTypeParams[tpident.Name] = f.targs[i+j]
+			}
+		}
+		decl = preprocess(decl, info, parentTypeParams).(*ast.FuncDecl)
+		generatedDecls[name] = decl
 	}
-
-	generatedTypes := map[string]struct{}{}
 
 	// Generate types
 	for len(instantiatedTypes) > 0 {
 		temp := instantiatedTypes
 		instantiatedTypes = map[string]instantiation{}
 		for name, f := range temp {
-			if _, ok := generatedTypes[name]; ok {
+			if _, ok := generatedDecls[name]; ok {
 				continue
 			}
-			generatedTypes[name] = struct{}{}
 
 			template := astcopy.TypeSpec(typeTemplates[f.name])
 			spec := astutil.Apply(template, func(c *astutil.Cursor) bool {
@@ -265,14 +248,14 @@ func preprocess(node ast.Node, info *types.Info) (ast.Node, []ast.Decl) {
 				return true
 			}, nil).(*ast.TypeSpec)
 			spec.Name = ast.NewIdent(name)
-			decls = append(decls, &ast.GenDecl{
+			generatedDecls[name] = &ast.GenDecl{
 				Tok:   token.TYPE,
 				Specs: []ast.Spec{spec},
-			})
+			}
 		}
 	}
 
-	return node, decls
+	return node
 }
 
 func main() {
@@ -301,9 +284,49 @@ func main() {
 		os.Exit(2)
 	}
 
-	root, decls := preprocess(file, info)
+	// Remove contracts. This has to be done first, otherwise astutil will choke.
+	root := astutil.Apply(file, func(c *astutil.Cursor) bool {
+		switch node := c.Node().(type) {
+		case *ast.TypeSpec:
+			if _, ok := node.Type.(*ast.ContractType); ok {
+				c.Delete()
+				return false
+			}
+		}
+		return true
+	}, nil)
+
+	// Remove template definitions
+	root = astutil.Apply(root, func(c *astutil.Cursor) bool {
+		switch node := c.Node().(type) {
+		case *ast.FuncDecl:
+			if node.TParams != nil {
+				functionTemplates[node.Name.Name] = node
+				c.Delete()
+				return false
+			}
+		case *ast.GenDecl:
+			var newSpecs []ast.Spec
+			for _, spec := range node.Specs {
+				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.TParams != nil {
+					typeTemplates[typeSpec.Name.Name] = typeSpec
+				} else {
+					newSpecs = append(newSpecs, spec)
+				}
+			}
+			node.Specs = newSpecs
+			if len(newSpecs) == 0 {
+				c.Delete()
+				return false
+			}
+		}
+		return true
+	}, nil)
+
+	root = preprocess(root, info, nil)
+
 	printer.Fprint(fout, fset, root)
-	for _, decl := range decls {
+	for _, decl := range generatedDecls {
 		fmt.Fprintf(fout, "\n")
 		printer.Fprint(fout, fset, decl)
 		fmt.Fprintf(fout, "\n")

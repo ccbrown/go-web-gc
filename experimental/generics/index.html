@@ -86,7 +86,7 @@
                             Run: (body, output) => {
                                 $('#controls input').attr('disabled', true);
 
-                                writeToGoFilesystem('/main-raw.go', body);
+                                writeToGoFilesystem('/main.go2', body);
                                 output({
                                     Kind: 'start',
                                 });
@@ -104,7 +104,7 @@
                                 };
 
                                 
-                                exec(cmds['preprocess'], ['main-raw.go', 'main.go'])
+                                exec(cmds['preprocess'], ['main.go2', 'main.go'])
                                     .then((code) => code || exec(cmds['compile'], ['-p', 'main', '-complete', '-dwarf=false', '-pack', '-importcfg', 'importcfg', 'main.go']))
                                     .then((code) => code || exec(cmds['link'], ['-importcfg', 'importcfg.link', '-buildmode=exe', 'main.a']))
                                     .then((code) => code || exec(readFromGoFilesystem('a.out')))

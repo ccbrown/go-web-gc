@@ -15,7 +15,7 @@ One potential use-case for this is making compiler changes easily and freely ava
 
 If you're interested in trying out the `try` [proposal](https://github.com/golang/proposal/blob/master/design/32437-try-builtin.md), you can do so here: https://ccbrown.github.io/wasm-go-playground/experimental/try-builtin/
 
-If you're interested in trying out generics, you can do so here: https://ccbrown.github.io/wasm-go-playground/experimental/generics/
+If you're interested in trying out generics [draft design](https://go.googlesource.com/proposal/+/4a54a00950b56dd0096482d0edae46969d7432a6/design/go2draft-contracts.md), you can do so here: https://ccbrown.github.io/wasm-go-playground/experimental/generics/
 
 ## Code
 
